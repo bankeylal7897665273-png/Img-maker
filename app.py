@@ -11,7 +11,7 @@ app = Flask(__name__)
 app.secret_key = os.urandom(24) 
 
 # --- CONFIGURATION ---
-# Tera diya hua HF Token
+# Tera HF Token securely backend mein hai (Frontend walon ko nahi dikhega)
 HF_TOKEN = "Bearer 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"
 HEADERS = {"Authorization": HF_TOKEN}
 
@@ -19,7 +19,7 @@ HEADERS = {"Authorization": HF_TOKEN}
 CHAT_MODEL_URL = "https://api-inference.huggingface.co/models/mistralai/Mistral-7B-Instruct-v0.2"
 IMAGE_MODEL_URL = "https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-xl-base-1.0"
 
-# --- HTML/CSS/JS (Tera Original UI Ekdum Same) ---
+# --- HTML/CSS/JS (Fixed UI, Copy Issue, and Custom Error Popups) ---
 HTML_CODE = """
 <!DOCTYPE html>
 <html lang="en">
@@ -45,41 +45,60 @@ HTML_CODE = """
             --user-bubble-bg: rgba(102, 252, 241, 0.1);
         }
 
+        /* --- MOBILE CHROME FIX: Disable text selection everywhere by default --- */
         * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Google Sans', Arial, sans-serif; -webkit-tap-highlight-color: transparent; }
-        body { background: var(--bg-color); color: var(--text-main); height: 100vh; overflow: hidden; display: flex; flex-direction: column; }
+        body { 
+            background: var(--bg-color); color: var(--text-main); height: 100vh; overflow: hidden; display: flex; flex-direction: column; 
+            -webkit-user-select: none; /* Safari/Chrome */
+            user-select: none; /* Standard */
+        }
+
+        /* Allow selection ONLY on inputs and chat messages */
+        input, .user-bubble, .ai-bubble, .code-block {
+            -webkit-user-select: text;
+            user-select: text;
+        }
 
         .material-symbols-outlined { font-variation-settings: 'FILL' 0, 'wght' 300, 'GRAD' 0, 'opsz' 24; }
         .filled-icon { font-variation-settings: 'FILL' 1, 'wght' 400; }
 
+        /* --- CUSTOM TOAST NOTIFICATIONS (NEW) --- */
+        #toast-container { position: fixed; top: 20px; right: 20px; z-index: 20000; display: flex; flex-direction: column; gap: 10px; pointer-events: none; }
+        .custom-toast { background: rgba(26, 30, 36, 0.95); color: #fff; padding: 15px 20px; border-radius: 12px; font-size: 14px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); border-left: 4px solid var(--border-color); backdrop-filter: blur(10px); animation: slideInRight 0.4s cubic-bezier(0.25, 0.8, 0.25, 1) forwards; display: flex; align-items: center; gap: 10px; font-weight: 500;}
+        .custom-toast.error { border-left-color: #ff4d4d; }
+        .custom-toast.error .toast-icon { color: #ff4d4d; }
+        @keyframes slideInRight { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+        @keyframes fadeOut { to { opacity: 0; transform: translateY(-10px); } }
+
+        /* --- AUTH SCREEN STYLES --- */
         #auth-screen {
-            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-            background: var(--surface-color); z-index: 10000; display: flex;
-            align-items: center; justify-content: center; padding: 20px; transition: 0.3s ease;
+            position: fixed; top: 0; left: 0; width: 100%; height: 100vh;
+            background: var(--bg-color); z-index: 10000; display: flex;
+            align-items: center; justify-content: center; padding: 20px; transition: 0.4s ease;
         }
-        #auth-screen.hidden { opacity: 0; pointer-events: none; transform: translateY(-50px);}
+        #auth-screen.hidden { opacity: 0; pointer-events: none; transform: scale(1.05);}
         .auth-box {
-            background: #fff; width: 100%; max-width: 400px; padding: 35px 25px;
-            border-radius: 24px; box-shadow: 0 15px 50px rgba(102, 252, 241, 0.2);
-            text-align: center; display: none; flex-direction: column; gap: 18px;
-            animation: fadeIn 0.4s ease; border: 2px solid var(--border-color);
+            background: var(--surface-color); width: 100%; max-width: 400px; padding: 40px 25px;
+            border-radius: 24px; box-shadow: 0 15px 50px rgba(0, 0, 0, 0.5);
+            text-align: center; display: none; flex-direction: column; gap: 20px;
+            animation: fadeIn 0.4s ease; border: 1px solid rgba(102, 252, 241, 0.2);
         }
         .auth-box.active { display: flex; }
-        .auth-title { font-size: 26px; font-weight: 700; color: #000; margin-bottom: 5px; display: flex; align-items: center; justify-content: center; gap: 8px; text-transform: uppercase; letter-spacing: 1px;}
+        .auth-title { font-size: 26px; font-weight: 700; color: #fff; display: flex; align-items: center; justify-content: center; gap: 8px; text-transform: uppercase; letter-spacing: 1px;}
         .auth-input {
-            width: 100%; padding: 15px; border-radius: 12px; border: 1px solid rgba(0,0,0,0.1);
-            font-size: 16px; outline: none; background: #fff; transition: 0.2s; color: #000;
+            width: 100%; padding: 16px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.1);
+            font-size: 16px; outline: none; background: rgba(0,0,0,0.3); transition: 0.2s; color: #fff;
         }
-        .auth-input::placeholder { color: #888; }
-        .auth-input:focus { border-color: var(--sparkle-color); box-shadow: 0 0 0 2px rgba(102, 252, 241, 0.3); }
+        .auth-input::placeholder { color: #666; }
+        .auth-input:focus { border-color: var(--sparkle-color); box-shadow: 0 0 0 2px rgba(102, 252, 241, 0.2); }
         .auth-btn {
-            width: 100%; padding: 15px; border: none; border-radius: 12px;
+            width: 100%; padding: 16px; border: none; border-radius: 12px;
             background: linear-gradient(45deg, var(--sparkle-color), var(--border-color)); color: #000; font-size: 17px; font-weight: 700;
-            cursor: pointer; transition: 0.3s; margin-top: 10px; text-transform: uppercase;
+            cursor: pointer; transition: 0.3s; margin-top: 5px; text-transform: uppercase; letter-spacing: 1px;
         }
-        .auth-btn:hover { box-shadow: 0 0 15px rgba(102, 252, 241, 0.5); transform: scale(1.02); }
-        .auth-switch { font-size: 15px; color: #666; cursor: pointer; margin-top: 15px; }
-        .auth-switch span { color: #000; font-weight: 700; }
-        #auth-error { color: #d93025; font-size: 14px; min-height: 20px; font-weight: bold; margin-bottom: -10px; }
+        .auth-btn:hover { box-shadow: 0 0 15px rgba(102, 252, 241, 0.4); transform: translateY(-2px); }
+        .auth-switch { font-size: 14px; color: #aaa; cursor: pointer; margin-top: 10px; }
+        .auth-switch span { color: var(--sparkle-color); font-weight: 700; }
 
         .sidebar { position: fixed; top: 0; left: 0; width: 280px; height: 100%; background: var(--sidebar-bg); z-index: 1001; transform: translateX(-100%); transition: transform 0.3s ease; box-shadow: 5px 0 25px rgba(102,252,241,0.1); display: flex; flex-direction: column; border-right: 1px solid rgba(102,252,241,0.2); }
         .sidebar.active { transform: translateX(0); }
@@ -109,15 +128,15 @@ HTML_CODE = """
         .msg-row { display: flex; width: 100%; animation: fadeIn 0.3s ease; }
         .msg-row.user { justify-content: flex-end; }
         .msg-row.ai { justify-content: flex-start; gap: 12px; }
-        .user-bubble { background: var(--user-bubble-bg); border: 1px solid var(--border-color); padding: 12px 18px; border-radius: 24px 24px 4px 24px; font-size: 15px; max-width: 85%; line-height: 1.5; color: #fff; }
+        .user-bubble { background: var(--user-bubble-bg); border: 1px solid var(--border-color); padding: 12px 18px; border-radius: 24px 24px 4px 24px; font-size: 15px; max-width: 85%; line-height: 1.5; color: #fff; word-wrap: break-word;}
         .ai-icon-container { width: 28px; height: 28px; display: flex; align-items: flex-start; margin-top: 4px; flex-shrink: 0; }
         .ai-icon-container .material-symbols-outlined { font-size: 28px; background: -webkit-linear-gradient(45deg, #66fcf1, #bc13fe); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
         .ai-bubble { font-size: 15px; line-height: 1.6; width: 100%; max-width: 85%; color: #fff; padding-top: 4px; overflow-wrap: break-word; }
 
         .code-block { background: var(--code-bg); border-radius: 12px; margin: 10px 0; overflow: hidden; font-family: monospace; color: #d4d4d4; border: 1px solid rgba(255,255,255,0.05); }
         .code-header { background: rgba(255,255,255,0.05); padding: 8px 12px; display: flex; justify-content: space-between; align-items: center; font-size: 12px; color: #a0a0a0; border-bottom: 1px solid rgba(255,255,255,0.05);}
-        .copy-btn { background: none; border: none; color: #a0a0a0; cursor: pointer; font-size: 12px; display: flex; align-items: center; gap: 4px; transition: 0.2s; }
-        .chat-image, .chat-video { max-width: 100%; border-radius: 12px; margin: 10px 0; border: 1px solid var(--sparkle-color); box-shadow: 0 0 15px rgba(102,252,241,0.2); }
+        .copy-btn { background: none; border: none; color: #a0a0a0; cursor: pointer; font-size: 12px; display: flex; align-items: center; gap: 4px; transition: 0.2s; outline: none; }
+        .chat-image { max-width: 100%; border-radius: 12px; margin: 10px 0; border: 1px solid var(--sparkle-color); box-shadow: 0 0 15px rgba(102,252,241,0.2); }
         
         .input-wrapper { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); width: 90%; max-width: 768px; background: var(--surface-color); border: 1px solid rgba(102, 252, 241, 0.3); border-radius: 24px; display: flex; flex-direction: column; padding: 4px 8px; z-index: 20; box-shadow: 0 5px 25px rgba(0,0,0,0.5); transition: 0.3s;}
         
@@ -151,24 +170,24 @@ HTML_CODE = """
 </head>
 <body>
 
+    <div id="toast-container"></div>
+
     <div id="auth-screen">
         <div class="auth-box active" id="login-box">
             <div class="auth-title"><span class="material-symbols-outlined filled-icon">auto_awesome</span> Welcome Back</div>
-            <p style="color: #666; font-size: 14px; margin-bottom: 10px;">Login to use Nexis AI Studio</p>
+            <p style="color: #aaa; font-size: 14px; margin-bottom: 5px;">Login to use Nexis AI Studio</p>
             <input type="email" id="log-email" class="auth-input" placeholder="Email Address">
             <input type="password" id="log-pass" class="auth-input" placeholder="Password">
-            <div id="log-error" class="auth-error"></div>
             <button class="auth-btn" onclick="loginUser()">Login</button>
             <div class="auth-switch" onclick="toggleAuth('signup')">Don't have an account? <span>Create One</span></div>
         </div>
 
         <div class="auth-box" id="signup-box">
             <div class="auth-title"><span class="material-symbols-outlined filled-icon">auto_awesome</span> Create Account</div>
-            <p style="color: #666; font-size: 14px; margin-bottom: 10px;">Join Nexis AI Studio</p>
+            <p style="color: #aaa; font-size: 14px; margin-bottom: 5px;">Join Nexis AI Studio</p>
             <input type="text" id="reg-name" class="auth-input" placeholder="Full Name">
             <input type="email" id="reg-email" class="auth-input" placeholder="Email Address">
             <input type="password" id="reg-pass" class="auth-input" placeholder="Password (min 6 chars)">
-            <div id="reg-error" class="auth-error"></div>
             <button class="auth-btn" onclick="registerUser()">Sign Up</button>
             <div class="auth-switch" onclick="toggleAuth('login')">Already have an account? <span>Login Here</span></div>
         </div>
@@ -251,15 +270,34 @@ HTML_CODE = """
         let selectedFile = null;
         let chatSessions = JSON.parse(localStorage.getItem('nexis_chat_history')) || []; 
 
+        // --- CUSTOM TOAST FUNCTION ---
+        function showToast(message, type = 'error') {
+            const container = document.getElementById('toast-container');
+            const toast = document.createElement('div');
+            toast.className = `custom-toast ${type}`;
+            const icon = type === 'error' ? 'error' : 'check_circle';
+            toast.innerHTML = `<span class="material-symbols-outlined toast-icon">${icon}</span> <span>${message}</span>`;
+            
+            container.appendChild(toast);
+            
+            // Remove after animation
+            setTimeout(() => {
+                toast.style.animation = 'fadeOut 0.4s forwards';
+                setTimeout(() => { toast.remove(); }, 400);
+            }, 3000);
+        }
+
+        // --- AUTH LOGIC (FIXED) ---
         function toggleAuth(type) {
-            document.getElementById('log-error').innerText = '';
-            document.getElementById('reg-error').innerText = '';
+            const loginBox = document.getElementById('login-box');
+            const signupBox = document.getElementById('signup-box');
+            
             if (type === 'signup') {
-                document.getElementById('login-box').classList.remove('active');
-                document.getElementById('signup-box').classList.add('active');
+                loginBox.classList.remove('active');
+                setTimeout(() => { signupBox.classList.add('active'); }, 50); // Small delay for smooth transition
             } else {
-                document.getElementById('signup-box').classList.remove('active');
-                document.getElementById('login-box').classList.add('active');
+                signupBox.classList.remove('active');
+                setTimeout(() => { loginBox.classList.add('active'); }, 50);
             }
         }
 
@@ -267,45 +305,34 @@ HTML_CODE = """
             const name = document.getElementById('reg-name').value.trim();
             const email = document.getElementById('reg-email').value.trim();
             const pass = document.getElementById('reg-pass').value.trim();
-            const errorDiv = document.getElementById('reg-error');
 
-            if (!name || !email || !pass) { errorDiv.innerText = "All fields are required!"; return; }
-            if (pass.length < 6) { errorDiv.innerText = "Password must be at least 6 characters!"; return; }
-            
-            errorDiv.innerText = "Creating account...";
-            
-            if (users_db[email]) { errorDiv.innerText = "Email already registered. Please Login."; return;}
+            if (!name || !email || !pass) { showToast("All fields are required!"); return; }
+            if (pass.length < 6) { showToast("Password must be at least 6 characters!"); return; }
+            if (users_db[email]) { showToast("Email already registered. Please Login."); return;}
 
             const uid = Date.now().toString();
             users_db[email] = { uid, name, email, pass };
             localStorage.setItem('nexis_users_db', JSON.stringify(users_db));
             
-            setTimeout(() => {
-                errorDiv.innerText = "";
-                loginUser(email, pass); 
-            }, 1000);
+            showToast("Account Created! Logging in...", "success");
+            setTimeout(() => { loginUser(email, pass); }, 1000);
         }
 
         function loginUser(provided_email = '', provided_pass = '') {
             const email = provided_email || document.getElementById('log-email').value.trim();
             const pass = provided_pass || document.getElementById('log-pass').value.trim();
-            const errorDiv = document.getElementById('log-error');
 
-            if (!email || !pass) { errorDiv.innerText = "All fields are required!"; return; }
-            errorDiv.innerText = "Logging in...";
+            if (!email || !pass) { showToast("Please enter email and password."); return; }
 
             const user = users_db[email];
             
-            setTimeout(() => {
-                if (user && user.pass === pass) {
-                    current_user_id = user.uid;
-                    localStorage.setItem('nexis_current_user', current_user_id);
-                    errorDiv.innerText = "";
-                    renderApp();
-                } else {
-                    errorDiv.innerText = "Invalid Email or Password!";
-                }
-            }, 1000);
+            if (user && user.pass === pass) {
+                current_user_id = user.uid;
+                localStorage.setItem('nexis_current_user', current_user_id);
+                renderApp();
+            } else {
+                showToast("Invalid Email or Password!");
+            }
         }
 
         function logoutUser() {
@@ -325,6 +352,7 @@ HTML_CODE = """
 
         if (current_user_id) { renderApp(); }
 
+        // --- CHAT UI LOGIC ---
         function toggleSidebar() { document.getElementById('sidebar').classList.toggle('active'); document.getElementById('sidebar-overlay').classList.toggle('active'); }
 
         document.getElementById('user-input').addEventListener('input', function() {
@@ -449,7 +477,7 @@ HTML_CODE = """
             document.getElementById('chat-box').insertAdjacentHTML('beforeend', `
                 <div class="msg-row ai" id="${loadingId}">
                     <div class="ai-icon-container"><span class="material-symbols-outlined filled-icon">auto_awesome</span></div>
-                    <div class="ai-bubble loader">Nexis AI is processing your prompt... (Thinking Mode Active)</div>
+                    <div class="ai-bubble loader">Nexis AI is processing your prompt...</div>
                 </div>`);
             scrollToBottom();
 
@@ -484,14 +512,18 @@ HTML_CODE = """
                 
                 if (document.getElementById(loadingId)) document.getElementById(loadingId).remove();
 
-                if (data.type === 'image') {
+                if (data.type === 'error') {
+                    showToast(data.text);
+                    appendAiHtml(`<span style="color: #ff4d4d;">❌ Error: ${data.text}</span>`, 'text');
+                } else if (data.type === 'image') {
                     appendAiHtml(data.url, 'image');
                 } else {
                     appendAiHtml(data.text, 'text');
                 }
             } catch (error) {
                 if (document.getElementById(loadingId)) document.getElementById(loadingId).remove();
-                appendAiHtml(`<span style="color: #ff4d4d;">❌ Error: Request timeout. Vercel free tier limit or HuggingFace is sleeping. Try again.</span>`, 'text');
+                showToast("Server Timeout or Connection Error!");
+                appendAiHtml(`<span style="color: #ff4d4d;">❌ Error: Request timeout. Server overload ya connection issue.</span>`, 'text');
             }
         }
     </script>
@@ -519,11 +551,10 @@ def nexis_ai_core():
                 img_url = f"data:image/jpeg;base64,{image_b64}"
                 return jsonify({"type": "image", "url": img_url})
             else:
-                return jsonify({"type": "text", "text": "❌ Image generation failed. Model might be loading or token limit reached. Try again in 30 seconds."})
+                return jsonify({"type": "error", "text": "Image model loading, try again in 10 seconds."})
         
-        # --- TEXT & CODE CHAT LOGIC (SMART THINKING) ---
+        # --- TEXT & CODE CHAT LOGIC ---
         else:
-            # Smart context injection
             system_prompt = "You are Nexis AI, an advanced, highly intelligent professional assistant created for a developer. Provide accurate, smart, and direct answers without unnecessary fluff. "
             full_prompt = f"<s>[INST] {system_prompt} User Query: {prompt} [/INST]"
             
@@ -542,17 +573,15 @@ def nexis_ai_core():
                 result = response.json()
                 ai_text = result[0].get("generated_text", "")
                 
-                # Clean up the output string
                 if "[/INST]" in ai_text:
                     ai_text = ai_text.split("[/INST]")[-1].strip()
                     
                 return jsonify({"type": "text", "text": ai_text})
             else:
-                return jsonify({"type": "text", "text": "❌ AI server (Hugging Face) is busy. Please wait a moment and send your message again."})
+                return jsonify({"type": "error", "text": "Hugging Face API limit reached or server busy."})
                 
     except Exception as e:
-        return jsonify({"type": "text", "text": f"❌ Error: {str(e)}"})
+        return jsonify({"type": "error", "text": f"Server Error: {str(e)}"})
 
-# For Local Testing
 if __name__ == '__main__':
     app.run(debug=True)
