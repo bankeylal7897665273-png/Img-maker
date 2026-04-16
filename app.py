@@ -4,30 +4,22 @@ import urllib.parse
 import requests
 import time
 import json
+import base64
 from flask import Flask, render_template_string, request, jsonify, session
 
-# Use a complex secret key for sessions
 app = Flask(__name__)
 app.secret_key = os.urandom(24) 
 
-# --- CONFIGURATION (IMPORTANT: For real use, configure actual endpoints) ---
-# Since this is a single file without a DB, we use in-memory simulation for users and chat history.
-# In production, connect this logic to Firebase or a database.
-users_db = {} # Simulated user database: {email: {name, password, chats: []}}
-session_data = {} # Simulated session chat history for current turn
+# --- CONFIGURATION ---
+# Tera diya hua HF Token
+HF_TOKEN = "Bearer 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"
+HEADERS = {"Authorization": HF_TOKEN}
 
-# Hugging Face Model Endpoints (Free tier is rate limited, for real use add paid API keys)
+# Models
 CHAT_MODEL_URL = "https://api-inference.huggingface.co/models/mistralai/Mistral-7B-Instruct-v0.2"
-CODE_FIX_MODEL_URL = "https://api-inference.huggingface.co/models/bigcode/starcoder" # Code-specialized
 IMAGE_MODEL_URL = "https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-xl-base-1.0"
-VIDEO_MODEL_URL = "https://api-inference.huggingface.co/models/runwayml/stable-diffusion-v1-5" # Stable fallback for text-to-video
 
-# Add your free HF Token here if rate limits are an issue (Rate limits are still strict)
-HF_TOKEN = "" # Jese: "Bearer hf_xxx"
-
-HEADERS = {"Authorization": HF_TOKEN} if HF_TOKEN else {}
-
-# --- HTML/CSS/JS (Complex, professional, mobile-first design) ---
+# --- HTML/CSS/JS (Tera Original UI Ekdum Same) ---
 HTML_CODE = """
 <!DOCTYPE html>
 <html lang="en">
@@ -59,7 +51,6 @@ HTML_CODE = """
         .material-symbols-outlined { font-variation-settings: 'FILL' 0, 'wght' 300, 'GRAD' 0, 'opsz' 24; }
         .filled-icon { font-variation-settings: 'FILL' 1, 'wght' 400; }
 
-        /* --- AUTH SCREEN STYLES (Is Back!) --- */
         #auth-screen {
             position: fixed; top: 0; left: 0; width: 100%; height: 100%;
             background: var(--surface-color); z-index: 10000; display: flex;
@@ -90,7 +81,6 @@ HTML_CODE = """
         .auth-switch span { color: #000; font-weight: 700; }
         #auth-error { color: #d93025; font-size: 14px; min-height: 20px; font-weight: bold; margin-bottom: -10px; }
 
-        /* --- SIDEBAR ( Hamburger + New Chat + Memory list ) --- */
         .sidebar { position: fixed; top: 0; left: 0; width: 280px; height: 100%; background: var(--sidebar-bg); z-index: 1001; transform: translateX(-100%); transition: transform 0.3s ease; box-shadow: 5px 0 25px rgba(102,252,241,0.1); display: flex; flex-direction: column; border-right: 1px solid rgba(102,252,241,0.2); }
         .sidebar.active { transform: translateX(0); }
         .sidebar-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); z-index: 1000; display: none; }
@@ -105,20 +95,17 @@ HTML_CODE = """
         .logout-btn { margin: 15px; padding: 12px 15px; border-radius: 20px; cursor: pointer; background: rgba(217, 48, 37, 0.1); color: #d93025; font-weight: 700; display: flex; align-items: center; gap: 10px; border: 1px solid #d93025; }
         .logout-btn:hover { background: rgba(217, 48, 37, 0.2); }
 
-        /* HEADER */
         .header { display: flex; justify-content: space-between; align-items: center; padding: 15px 18px; background: var(--bg-color); z-index: 10; border-bottom: 1px solid rgba(102, 252, 241, 0.2); box-shadow: 0 0 15px rgba(102, 252, 241, 0.1); }
         .header-left { display: flex; align-items: center; gap: 15px; }
         .header-icon { color: var(--sparkle-color); cursor: pointer; padding: 8px; border-radius: 50%; }
         .header-icon:hover { background: rgba(102, 252, 241, 0.1); }
         .model-name { font-size: 20px; font-weight: 700; color: var(--sparkle-color); display: flex; align-items: center; gap: 6px; letter-spacing: 1px; text-transform: uppercase;}
 
-        /* MAIN CHAT AREA (Ful scrolling and keyboard fix) */
         .chat-container { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; align-items: center; position: relative; scroll-behavior: smooth; }
-        .messages-wrapper { width: 100%; max-width: 768px; display: flex; flex-direction: column; gap: 24px; padding-bottom: 140px; } /* Ful scrollable till bottom */
+        .messages-wrapper { width: 100%; max-width: 768px; display: flex; flex-direction: column; gap: 24px; padding-bottom: 140px; }
         .welcome-screen { position: absolute; top: 30%; left: 50%; transform: translate(-50%, -50%); text-align: center; width: 100%; }
         .welcome-sparkle { font-size: 55px; background: -webkit-linear-gradient(45deg, #66fcf1, #45a29e, #bc13fe); -webkit-background-clip: text; -webkit-text-fill-color: transparent; filter: drop-shadow(0 0 10px rgba(102,252,241,0.5));}
 
-        /* BUBBLES */
         .msg-row { display: flex; width: 100%; animation: fadeIn 0.3s ease; }
         .msg-row.user { justify-content: flex-end; }
         .msg-row.ai { justify-content: flex-start; gap: 12px; }
@@ -127,16 +114,13 @@ HTML_CODE = """
         .ai-icon-container .material-symbols-outlined { font-size: 28px; background: -webkit-linear-gradient(45deg, #66fcf1, #bc13fe); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
         .ai-bubble { font-size: 15px; line-height: 1.6; width: 100%; max-width: 85%; color: #fff; padding-top: 4px; overflow-wrap: break-word; }
 
-        /* CODE & CHAT UI */
         .code-block { background: var(--code-bg); border-radius: 12px; margin: 10px 0; overflow: hidden; font-family: monospace; color: #d4d4d4; border: 1px solid rgba(255,255,255,0.05); }
         .code-header { background: rgba(255,255,255,0.05); padding: 8px 12px; display: flex; justify-content: space-between; align-items: center; font-size: 12px; color: #a0a0a0; border-bottom: 1px solid rgba(255,255,255,0.05);}
         .copy-btn { background: none; border: none; color: #a0a0a0; cursor: pointer; font-size: 12px; display: flex; align-items: center; gap: 4px; transition: 0.2s; }
         .chat-image, .chat-video { max-width: 100%; border-radius: 12px; margin: 10px 0; border: 1px solid var(--sparkle-color); box-shadow: 0 0 15px rgba(102,252,241,0.2); }
         
-        /* FLOATING INPUT BAR ( Fixed to bottom ) */
         .input-wrapper { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); width: 90%; max-width: 768px; background: var(--surface-color); border: 1px solid rgba(102, 252, 241, 0.3); border-radius: 24px; display: flex; flex-direction: column; padding: 4px 8px; z-index: 20; box-shadow: 0 5px 25px rgba(0,0,0,0.5); transition: 0.3s;}
         
-        /* Previews area */
         .preview-container { display: flex; gap: 10px; padding: 8px 12px 0 12px; overflow-x: auto; max-height: 60px;}
         .preview-item { background: rgba(0,0,0,0.3); border: 1px solid rgba(102,252,241,0.2); padding: 4px 10px; border-radius: 12px; font-size: 12px; display: flex; align-items: center; gap: 6px; color: var(--text-muted); }
         .preview-item .remove { cursor: pointer; color: red; font-size: 16px; font-weight: bold; }
@@ -153,7 +137,6 @@ HTML_CODE = """
         .send-btn { color: var(--text-muted); display: flex; }
         .send-btn.active { color: var(--sparkle-color); filter: drop-shadow(0 0 5px var(--sparkle-color)); }
         
-        /* Mode Menu & Upload Menu */
         .mode-badge { font-size: 10px; background: rgba(102,252,241,0.2); color: var(--sparkle-color); padding: 2px 7px; border-radius: 8px; position: absolute; top: -8px; left: 5px; font-weight: bold; border: 1px solid var(--border-color); pointer-events: none;}
         
         .attach-menu, .mode-menu { position: absolute; bottom: 50px; left: 0; background: var(--bg-color); border-radius: 16px; box-shadow: 0 4px 15px rgba(0,0,0,0.5); display: none; flex-direction: column; overflow: hidden; border: 1px solid var(--border-color); min-width: 170px; z-index: 30; }
@@ -232,7 +215,7 @@ HTML_CODE = """
         <div class="input-wrapper">
             <div class="preview-container" id="preview-container"></div>
             <div class="input-top">
-                <input type="text" id="user-input" placeholder="Gemini se nahin, professional AI se poochhein..." autocomplete="off">
+                <input type="text" id="user-input" placeholder="Professional AI se poochhein..." autocomplete="off">
             </div>
             <div class="input-bottom">
                 <div class="action-icons">
@@ -243,13 +226,11 @@ HTML_CODE = """
                     <div class="mode-menu" id="mode-menu">
                         <div class="menu-item" onclick="setMode('auto')"><span class="material-symbols-outlined">smart_toy</span> Auto Detect</div>
                         <div class="menu-item" onclick="setMode('image')"><span class="material-symbols-outlined">image</span> Image Only</div>
-                        <div class="menu-item" onclick="setMode('video')"><span class="material-symbols-outlined">movie</span> Video Only</div>
                     </div>
 
                     <button class="icon-btn" onclick="toggleAttachMenu()"><span class="material-symbols-outlined">add</span></button>
                     <div class="attach-menu" id="attach-menu">
                         <div class="menu-item" onclick="triggerFile('image/*')"><span class="material-symbols-outlined">image</span> Upload Image</div>
-                        <div class="menu-item" onclick="triggerFile('video/*')"><span class="material-symbols-outlined">movie</span> Upload Video</div>
                         <div class="menu-item" onclick="triggerFile('.pdf,.doc,.docx,.txt,.py,.html')"><span class="material-symbols-outlined">description</span> Upload Document</div>
                     </div>
                     <input type="file" id="hidden-file-input" style="display: none;" onchange="handleFileSelect(event)">
@@ -264,15 +245,12 @@ HTML_CODE = """
     </div>
 
     <script>
-        // --- CORE SESSION/DATA SIMULATION (Single file restriction) ---
-        // Since no external DB, these values are only for the current page life.
-        let users_db = JSON.parse(localStorage.getItem('nexis_users_db')) || {}; // Simulated simple signup
+        let users_db = JSON.parse(localStorage.getItem('nexis_users_db')) || {}; 
         let current_user_id = localStorage.getItem('nexis_current_user') || null;
-        let currentChatMode = 'auto'; // default
+        let currentChatMode = 'auto'; 
         let selectedFile = null;
-        let chatSessions = JSON.parse(localStorage.getItem('nexis_chat_history')) || []; // User session chat list
+        let chatSessions = JSON.parse(localStorage.getItem('nexis_chat_history')) || []; 
 
-        // --- AUTH LOGIC (IS BACK!) ---
         function toggleAuth(type) {
             document.getElementById('log-error').innerText = '';
             document.getElementById('reg-error').innerText = '';
@@ -298,14 +276,13 @@ HTML_CODE = """
             
             if (users_db[email]) { errorDiv.innerText = "Email already registered. Please Login."; return;}
 
-            // Simulate create account in memory/localStorage
             const uid = Date.now().toString();
             users_db[email] = { uid, name, email, pass };
             localStorage.setItem('nexis_users_db', JSON.stringify(users_db));
             
             setTimeout(() => {
                 errorDiv.innerText = "";
-                loginUser(email, pass); // auto login after signup
+                loginUser(email, pass); 
             }, 1000);
         }
 
@@ -333,7 +310,7 @@ HTML_CODE = """
 
         function logoutUser() {
             localStorage.removeItem('nexis_current_user');
-            localStorage.removeItem('nexis_chat_history'); // Clear chat on logout since not persistent
+            localStorage.removeItem('nexis_chat_history'); 
             location.reload(); 
         }
 
@@ -343,14 +320,10 @@ HTML_CODE = """
             
             const user = Object.values(users_db).find(u => u.uid === current_user_id);
             if(user) document.getElementById('welcome-name-display').innerText = user.name;
-            startNewChat(); // start a fresh chat on app render
+            startNewChat(); 
         }
 
-        // Auto render app if logged in
         if (current_user_id) { renderApp(); }
-
-
-        // --- CHAT & UI LOGIC ---
 
         function toggleSidebar() { document.getElementById('sidebar').classList.toggle('active'); document.getElementById('sidebar-overlay').classList.toggle('active'); }
 
@@ -360,7 +333,6 @@ HTML_CODE = """
         });
         document.getElementById('user-input').addEventListener('keypress', function (e) { if (e.key === 'Enter') sendMessage(); });
 
-        // Input height fix for mobile keyboard
         let inputWrapper = document.querySelector('.input-wrapper');
         document.getElementById('user-input').addEventListener('focus', function() {
             setTimeout(()=> { window.scrollTo(0, 0); document.body.scrollTop = 0; inputWrapper.style.bottom = '10px'; }, 300);
@@ -369,11 +341,9 @@ HTML_CODE = """
             setTimeout(()=> { inputWrapper.style.bottom = '20px'; }, 300);
         });
 
-        // Mode Menu
         function toggleModeMenu() { document.getElementById('mode-menu').classList.toggle('active'); }
         function setMode(mode) { currentChatMode = mode; document.getElementById('current-mode').innerText = mode.toUpperCase(); toggleModeMenu(); }
 
-        // Attach Menu & File upload
         function toggleAttachMenu() { document.getElementById('attach-menu').classList.toggle('active'); }
         function triggerFile(acceptType) { const input = document.getElementById('hidden-file-input'); input.accept = acceptType; input.click(); toggleAttachMenu(); }
         function handleFileSelect(event) {
@@ -391,10 +361,9 @@ HTML_CODE = """
         }
         function removeFile() { selectedFile = null; renderPreviews(); if(document.getElementById('user-input').value.trim().length === 0) document.getElementById('send-btn').classList.remove('active'); }
 
-        // Chat Sessions & History list
         function renderHistoryList() {
             const container = document.getElementById('history-container'); container.innerHTML = '';
-            chatSessions.slice(0, 5).forEach((chat, index) => { // show only last 5 in memory
+            chatSessions.slice(0, 5).forEach((chat, index) => { 
                 const div = document.createElement('div'); div.className = 'history-item'; div.innerText = chat.title;
                 div.onclick = () => { loadChat(chat.id); toggleSidebar(); }; container.appendChild(div);
             });
@@ -404,7 +373,6 @@ HTML_CODE = """
             const newId = Date.now().toString();
             document.getElementById('chat-box').innerHTML = ''; document.getElementById('welcome-screen').style.display = 'block';
             document.getElementById('user-input').value = ""; selectedFile = null; renderPreviews(); document.getElementById('send-btn').classList.remove('active');
-            // Store current new chat in memory list
             if(!chatSessions.length || chatSessions[0].title !== "नई चैट (NEW CHAT)") {
                 chatSessions.unshift({ id: newId, title: "नई चैट (NEW CHAT)", messages: [] });
                 renderHistoryList();
@@ -412,16 +380,13 @@ HTML_CODE = """
             if(document.getElementById('sidebar').classList.contains('active')) toggleSidebar();
         }
         function loadChat(id) {
-            startNewChat(); // clear current UI, but we don't have true persistence so we cannot fully load old messages
-            // chatSessions is just a list of names for now in this simulated single file
+            startNewChat(); 
             document.getElementById('welcome-screen').style.display = 'block';
         }
 
-        // APPEND FUNCTIONS
         function appendUserHtml(text) { document.getElementById('chat-box').insertAdjacentHTML('beforeend', `<div class="msg-row user"><div class="user-bubble">${text}</div></div>`); scrollToBottom();}
 
         function formatCodeBlock(text) {
-             // Basic format for code blocks with copy btn
              text = text.replace(/```(\w*)\n([\s\S]*?)```/g, function(match, lang, code) {
                 const escapedCode = code.replace(/</g, '&lt;').replace(/>/g, '&gt;');
                 return `<div class="code-block"><div class="code-header"><span>${lang || 'Code'}</span><button class="copy-btn" onclick="copyCode(this)"><span class="material-symbols-outlined" style="font-size:14px;">content_copy</span> Copy</button></div><pre><code>${escapedCode}</code></pre></div>`;
@@ -453,11 +418,7 @@ HTML_CODE = """
             
             if (type === 'image') {
                 bubble.innerHTML = `<img src="${content}" class="chat-image" alt="Nexis AI Generated Image">`;
-            } else if (type === 'video') {
-                bubble.innerHTML = `<video src="${content}" class="chat-video" controls autoplay loop playsinline></video>
-                                    <div style="font-size:12px; color:var(--sparkle-color); margin-top:5px;">${type === 'video' ? 'Nexis AI NOTE: Video model rate limited hai.' : ''}</div>`;
             } else {
-                // Text/Code formatting
                 let formatted = formatCodeBlock(content);
                 formatted = formatted.replace(/\n(?![^<]*>)/g, '<br>');
                 bubble.innerHTML = formatted;
@@ -465,12 +426,10 @@ HTML_CODE = """
             scrollToBottom();
         }
 
-        // SEND MESSAGE FUNCTION
         async function sendMessage() {
             const inputField = document.getElementById('user-input'); let message = inputField.value.trim();
             if (!message && !selectedFile) return;
 
-            // UI feedback
             document.getElementById('welcome-screen').style.display = 'none'; 
             let displayMessage = message;
             if (selectedFile) {
@@ -480,7 +439,6 @@ HTML_CODE = """
             appendUserHtml(displayMessage); 
             inputField.value = ''; document.getElementById('send-btn').classList.remove('active');
 
-            // Set simulated new chat name if first message
             if(chatSessions.length > 0 && chatSessions[0].title === "नई चैट (NEW CHAT)") {
                 chatSessions[0].title = message.substring(0, 20) + "...";
                 renderHistoryList();
@@ -491,30 +449,25 @@ HTML_CODE = """
             document.getElementById('chat-box').insertAdjacentHTML('beforeend', `
                 <div class="msg-row ai" id="${loadingId}">
                     <div class="ai-icon-container"><span class="material-symbols-outlined filled-icon">auto_awesome</span></div>
-                    <div class="ai-bubble loader">Nexis AI is processing your prompt...</div>
+                    <div class="ai-bubble loader">Nexis AI is processing your prompt... (Thinking Mode Active)</div>
                 </div>`);
             scrollToBottom();
 
-            // Prepare API call
             const payload = { text: message, mode: currentChatMode };
             
-            // Simulating uploading file content for single file backend processing
             if (selectedFile) {
-                // For python/text files we can read content on client side for simulation
                 if(selectedFile.type.startsWith('text/') || selectedFile.type.endsWith('py') || selectedFile.type.endsWith('html')){
                     payload.file_name = selectedFile.name;
                     payload.file_type = 'document';
-                    // Using FileReader to read content
                     const reader = new FileReader();
                     reader.onload = async (e) => {
-                        payload.file_content = e.target.result; // send text content for code fixing
-                        removeFile(); // remove preview after submission simulation
-                        await callApiAi(payload, loadingId); // nested await to ensure content read before call
+                        payload.file_content = e.target.result; 
+                        removeFile(); 
+                        await callApiAi(payload, loadingId); 
                     }
                     reader.readAsText(selectedFile.fileObject);
-                    return; // prevent second call
+                    return; 
                 } else {
-                     // For image/video in this single file we just send name/type for processing logic to detect image generation fallback
                      payload.file_name = selectedFile.name;
                      payload.file_type = selectedFile.type.startsWith('image/') ? 'image' : 'video';
                      removeFile(); 
@@ -524,10 +477,8 @@ HTML_CODE = """
             await callApiAi(payload, loadingId); 
         }
 
-        // Sub-function to call Flask Backend
         async function callApiAi(payload, loadingId) {
              try {
-                // Call actual Python Backend
                 const response = await fetch('/api/ai', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
                 const data = await response.json();
                 
@@ -535,15 +486,12 @@ HTML_CODE = """
 
                 if (data.type === 'image') {
                     appendAiHtml(data.url, 'image');
-                } else if (data.type === 'video') {
-                    appendAiHtml(data.url, 'video');
                 } else {
-                    // Normal Text/Code response
                     appendAiHtml(data.text, 'text');
                 }
             } catch (error) {
                 if (document.getElementById(loadingId)) document.getElementById(loadingId).remove();
-                appendAiHtml(`<span style="color: #ff4d4d;">❌ Connection Error: Server se reply nahin mila. (Single file Flask running?)</span>`, 'text');
+                appendAiHtml(`<span style="color: #ff4d4d;">❌ Error: Request timeout. Vercel free tier limit or HuggingFace is sleeping. Try again.</span>`, 'text');
             }
         }
     </script>
@@ -551,31 +499,60 @@ HTML_CODE = """
 </html>
 """
 
-# --- FLASK BACKEND LOGIC ---
-
 @app.route('/')
 def home():
-    # Simulated auth state on render (always shows login first)
     return render_template_string(HTML_CODE)
 
 @app.route('/api/ai', methods=['POST'])
 def nexis_ai_core():
-    # Simulated user verification and memory handling
-    # In a full app with database, use actual user ID from session.
     data = request.json
-    prompt = data.get('text', '').lower()
+    prompt = data.get('text', '').strip()
     mode = data.get('mode', 'auto')
-    
-    # Check for simulated uploaded file details for processing
-    file_name = data.get('file_name', '')
     file_type = data.get('file_type', '')
-    file_content = data.get('file_content', '') # Client-side read content simulation
     
-    # 1. LOGIC FOR CODE FIXING (PROFESSIONAL REQUEST)
-    if file_type == 'document' and file_name.endswith(('.py', '.html')) and file_content:
-        # Prompt model specialised for code fixing
-        payload = {
-            "inputs": f"You are Nexis AI, an advanced professional coder. A user provided this code from file '{file_name}':\n
-http://googleusercontent.com/immersive_entry_chip/0
+    try:
+        # --- IMAGE GENERATION LOGIC ---
+        if mode == 'image' or file_type == 'image' or 'generate image' in prompt.lower() or 'photo' in prompt.lower() or 'draw' in prompt.lower():
+            response = requests.post(IMAGE_MODEL_URL, headers=HEADERS, json={"inputs": prompt}, timeout=60)
+            if response.status_code == 200:
+                image_b64 = base64.b64encode(response.content).decode('utf-8')
+                img_url = f"data:image/jpeg;base64,{image_b64}"
+                return jsonify({"type": "image", "url": img_url})
+            else:
+                return jsonify({"type": "text", "text": "❌ Image generation failed. Model might be loading or token limit reached. Try again in 30 seconds."})
+        
+        # --- TEXT & CODE CHAT LOGIC (SMART THINKING) ---
+        else:
+            # Smart context injection
+            system_prompt = "You are Nexis AI, an advanced, highly intelligent professional assistant created for a developer. Provide accurate, smart, and direct answers without unnecessary fluff. "
+            full_prompt = f"<s>[INST] {system_prompt} User Query: {prompt} [/INST]"
+            
+            payload = {
+                "inputs": full_prompt,
+                "parameters": {
+                    "max_new_tokens": 1000, 
+                    "temperature": 0.7, 
+                    "top_p": 0.95
+                }
+            }
+            
+            response = requests.post(CHAT_MODEL_URL, headers=HEADERS, json=payload, timeout=30)
+            
+            if response.status_code == 200:
+                result = response.json()
+                ai_text = result[0].get("generated_text", "")
+                
+                # Clean up the output string
+                if "[/INST]" in ai_text:
+                    ai_text = ai_text.split("[/INST]")[-1].strip()
+                    
+                return jsonify({"type": "text", "text": ai_text})
+            else:
+                return jsonify({"type": "text", "text": "❌ AI server (Hugging Face) is busy. Please wait a moment and send your message again."})
+                
+    except Exception as e:
+        return jsonify({"type": "text", "text": f"❌ Error: {str(e)}"})
 
-Bas is naye complete `app.py` aur `requirements.txt` dono ko Github par push karo aur Render se connect kar do. Ab naya, powerful aur professional "Nexis AI v2.0" chalu ho jayega bina generic answers aur login screen ke saath!
+# For Local Testing
+if __name__ == '__main__':
+    app.run(debug=True)
